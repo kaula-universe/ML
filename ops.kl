@@ -1,0 +1,136 @@
+import std.math
+
+// 逐元素激活：in-place 修改 x[0..n)
+export fn ops_relu(f64* x, i32 n) {
+    for i in range(n) {
+        if x[i] < 0.0 {
+            x[i] = 0.0
+        }
+    }
+}
+
+// 内部：多项式近似 exp(x)，x 在 [-10, 10]
+export fn ops_exp(f64 x) f64 {
+    if x < -10.0 {
+        return 0.0
+    }
+    if x > 10.0 {
+        return 22026.4657948067
+    }
+    // 使用更精确的 Padé (3,3) 近似 + 范围缩减
+    i32 n = 0
+    while x > 0.693147 || x < -0.693147 {  // ln(2) ≈ 0.693147
+        x = x * 0.5
+        n = n + 1
+    }
+    // Padé (3,3) 近似 exp(x) 在 [-ln2, ln2]
+    // exp(x) ≈ (1 + x/2 + x^2/10 + x^3/120) / (1 - x/2 + x^2/10 - x^3/120)
+    f64 x2 = x * x
+    f64 x3 = x2 * x
+    f64 num = 1.0 + x * 0.5 + x2 / 10.0 + x3 / 120.0
+    f64 den = 1.0 - x * 0.5 + x2 / 10.0 - x3 / 120.0
+    f64 r = num / den
+    while n > 0 {
+        r = r * r
+        n = n - 1
+    }
+    return r
+}
+
+export fn ops_sigmoid(f64* x, i32 n) {
+    for i in range(n) {
+        x[i] = 1.0 / (1.0 + ops_exp(-x[i]))
+    }
+}
+
+export fn ops_tanh(f64* x, i32 n) {
+    for i in range(n) {
+        f64 ex = ops_exp(2.0 * x[i])
+        x[i] = (ex - 1.0) / (ex + 1.0)
+    }
+}
+
+// 数值稳定 softmax（先减最大值再 exp），结果写入 x
+export fn ops_softmax(f64* x, i32 n) {
+    f64 mx = x[0]
+    for i in range(n) {
+        if x[i] > mx {
+            mx = x[i]
+        }
+    }
+    f64 s = 0.0
+    for i in range(n) {
+        x[i] = ops_exp(x[i] - mx)
+        s = s + x[i]
+    }
+    for i in range(n) {
+        x[i] = x[i] / s
+    }
+}
+
+// 逐元素二元运算（out 可与 x 或 y 相同）
+export fn ops_add(f64* x, f64* y, f64* out, i32 n) {
+    for i in range(n) {
+        out[i] = x[i] + y[i]
+    }
+}
+
+export fn ops_sub(f64* x, f64* y, f64* out, i32 n) {
+    for i in range(n) {
+        out[i] = x[i] - y[i]
+    }
+}
+
+export fn ops_mul(f64* x, f64* y, f64* out, i32 n) {
+    for i in range(n) {
+        out[i] = x[i] * y[i]
+    }
+}
+
+export fn ops_scale(f64* x, f64 s, f64* out, i32 n) {
+    for i in range(n) {
+        out[i] = x[i] * s
+    }
+}
+
+// 点积 a·b
+export fn ops_dot(f64* a, f64* b, i32 n) f64 {
+    f64 s = 0.0
+    for i in range(n) {
+        s = s + a[i] * b[i]
+    }
+    return s
+}
+
+export fn ops_sum(f64* x, i32 n) f64 {
+    f64 s = 0.0
+    for i in range(n) {
+        s = s + x[i]
+    }
+    return s
+}
+
+// 均方误差 (1/n) Σ(a[i]-b[i])²
+export fn ops_mse(f64* a, f64* b, i32 n) f64 {
+    f64 s = 0.0
+    for i in range(n) {
+        f64 d = a[i] - b[i]
+        s = s + d * d
+    }
+    return s / as<f64>(n)
+}
+
+// MSE 损失梯度: out[i] = 2(a[i]-b[i])/n
+export fn ops_mse_deriv(f64* a, f64* b, f64* out, i32 n) {
+    f64 inv = 2.0 / as<f64>(n)
+    for i in range(n) {
+        out[i] = (a[i] - b[i]) * inv
+    }
+}
+
+// 交叉熵损失梯度（softmax 输出层用）: out[i] = y[i] - t[i]
+export fn ops_cross_entropy_deriv(f64* y, f64* target, f64* out, i32 n) {
+    for i in range(n) {
+        out[i] = y[i] - target[i]
+    }
+}

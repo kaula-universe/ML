@@ -1,0 +1,165 @@
+import "ml/ops.kl"
+import std.math
+import std.memory
+
+// 全连接层：y = act(W·x + b)
+// 前向缓存 x 供反向使用；反向同时累积 gw/gb，update() 时应用
+export class Linear {
+    nin: i32
+    nout: i32
+    act: i32
+    lr: f64
+    w: f64*
+    b: f64*
+    xin: f64*
+    z: f64*
+    y: f64*
+    gw: f64*
+    gb: f64*
+    gx: f64*
+    d: f64*
+
+    constructor(i32 nin, i32 nout, f64 lr, i32 act) {
+        self.nin = nin
+        self.nout = nout
+        self.lr = lr
+        self.act = act
+        self.w = as<f64*>(std.memory.kmm_v4_calloc(nin * nout, 8))
+        self.b = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
+        self.xin = as<f64*>(std.memory.kmm_v4_calloc(nin, 8))
+        self.z = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
+        self.y = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
+        self.gw = as<f64*>(std.memory.kmm_v4_calloc(nin * nout, 8))
+        self.gb = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
+        self.gx = as<f64*>(std.memory.kmm_v4_calloc(nin, 8))
+        self.d = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
+        f64 scale = std.math.math_sqrt(2.0 / as<f64>(nin))
+        i32 seed = 123456789
+        for i in range(self.size_w()) {
+            seed = (seed * 1103515245 + 12345) & 0x7fffffff
+            f64 r = as<f64>(seed) / 2147483647.0
+            self.w[i] = (r * 2.0 - 1.0) * scale
+        }
+    }
+
+    fn size_w() i32 {
+        return self.nin * self.nout
+    }
+
+    fn forward(f64* x) f64* {
+        for i in range(self.nin) {
+            self.xin[i] = x[i]
+        }
+        for j in range(self.nout) {
+            f64 acc = self.b[j]
+            for k in range(self.nin) {
+                acc = acc + self.w[k * self.nout + j] * self.xin[k]
+            }
+            self.z[j] = acc
+            self.y[j] = acc
+        }
+        if self.act == 1 {
+            ops_relu(self.y, self.nout)
+        }
+        if self.act == 2 {
+            ops_sigmoid(self.y, self.nout)
+        }
+        if self.act == 3 {
+            ops_tanh(self.y, self.nout)
+        }
+        return self.y
+    }
+
+    fn backward(f64* dy) f64* {
+        for j in range(self.nout) {
+            f64 dz = 1.0
+            if self.act == 1 {
+                if self.z[j] <= 0.0 {
+                    dz = 0.0
+                }
+            }
+            if self.act == 2 {
+                dz = self.y[j] * (1.0 - self.y[j])
+            }
+            if self.act == 3 {
+                dz = 1.0 - self.y[j] * self.y[j]
+            }
+            self.d[j] = dy[j] * dz
+        }
+        for i in range(self.gx_len()) {
+            self.gx[i] = 0.0
+        }
+        for j in range(self.nout) {
+            self.gb[j] = self.gb[j] + self.d[j]
+            for k in range(self.nin) {
+                self.gw[k * self.nout + j] = self.gw[k * self.nout + j] + self.xin[k] * self.d[j]
+                self.gx[k] = self.gx[k] + self.w[k * self.nout + j] * self.d[j]
+            }
+        }
+        return self.gx
+    }
+
+    fn gx_len() i32 {
+        return self.nin
+    }
+
+    fn update() {
+        for i in range(self.size_w()) {
+            self.w[i] = self.w[i] - self.lr * self.gw[i]
+            self.gw[i] = 0.0
+        }
+        for j in range(self.nout) {
+            self.b[j] = self.b[j] - self.lr * self.gb[j]
+            self.gb[j] = 0.0
+        }
+    }
+}
+
+// 多层感知机（全连接层堆叠 + 反向传播）
+export class MLP {
+    cnt: i32
+    layers: Linear*
+
+    constructor(i32 s0, i32 s1, i32 s2, f64 lr) {
+        self.cnt = 2
+        self.layers = as<Linear*>(std.memory.kmm_v4_calloc(2, 8))
+        i32 act = 2
+        Linear l0 = Linear(s0, s1, lr, act)
+        self.layers[0] = l0
+        Linear l1 = Linear(s1, s2, lr, act)
+        self.layers[1] = l1
+    }
+
+    fn predict(f64* x) f64* {
+        f64* cur = x
+        for l in range(self.cnt) {
+            Linear lin = self.layers[l]
+            cur = lin.forward(cur)
+        }
+        return cur
+    }
+
+    fn loss(f64* x, f64* y_true) f64 {
+        f64* y = self.predict(x)
+        Linear last = self.layers[self.cnt - 1]
+        return ops_mse(y, y_true, last.nout)
+    }
+
+    fn train_step(f64* x, f64* y_true) f64 {
+        f64* y = self.predict(x)
+        Linear last = self.layers[self.cnt - 1]
+        f64 loss = ops_mse(y, y_true, last.nout)
+        f64* dy = as<f64*>(std.memory.kmm_v4_alloc(last.nout * 8))
+        ops_mse_deriv(y, y_true, dy, last.nout)
+        f64* g = dy
+        i32 idx = self.cnt - 1
+        while idx >= 0 {
+            Linear lin = self.layers[idx]
+            g = lin.backward(g)
+            lin.update()
+            idx = idx - 1
+        }
+        std.memory.kmm_v4_free(dy)
+        return loss
+    }
+}
