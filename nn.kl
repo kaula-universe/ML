@@ -1,6 +1,12 @@
 import "ops.kl"
 import std.math
 import std.memory
+import std.random
+
+// 重置 std.random 全局生成器；MLP 构造时自动 seed，用户亦可显式调用
+export fn ml_seed(u64 s) {
+    std.random.random_seed(s)
+}
 
 // 全连接层：y = act(W·x + b)
 // 前向缓存 x 供反向使用；反向同时累积 gw/gb，update() 时应用
@@ -40,10 +46,8 @@ export class Linear {
         self.vw = as<f64*>(std.memory.kmm_v4_calloc(nin * nout, 8))
         self.vb = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
         f64 scale = std.math.math_sqrt(2.0 / as<f64>(nin))
-        i32 seed = 123456789
         for i in range(self.size_w()) {
-            seed = (seed * 1103515245 + 12345) & 0x7fffffff
-            f64 r = as<f64>(seed) / 2147483647.0
+            f64 r = std.random.random_f64()
             self.w[i] = (r * 2.0 - 1.0) * scale
         }
     }
@@ -148,6 +152,7 @@ export class MLP {
     layers: Linear*
 
     constructor(i32* dims, i32 cnt, i32* acts, f64 lr) {
+        ml_seed(123456789)
         self.cnt = cnt
         self.layers = as<Linear*>(std.memory.kmm_v4_calloc(cnt, 8))
         for l in range(cnt) {

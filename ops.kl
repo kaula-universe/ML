@@ -9,32 +9,9 @@ export fn ops_relu(f64* x, i32 n) {
     }
 }
 
-// 内部：多项式近似 exp(x)，x 在 [-10, 10]
+// 逐元素 exp：直接调用标准库 std.math.math_exp
 export fn ops_exp(f64 x) f64 {
-    if x < -10.0 {
-        return 0.0
-    }
-    if x > 10.0 {
-        return 22026.4657948067
-    }
-    // 使用更精确的 Padé (3,3) 近似 + 范围缩减
-    i32 n = 0
-    while x > 0.693147 || x < -0.693147 {  // ln(2) ≈ 0.693147
-        x = x * 0.5
-        n = n + 1
-    }
-    // Padé (3,3) 近似 exp(x) 在 [-ln2, ln2]
-    // exp(x) ≈ (1 + x/2 + x^2/10 + x^3/120) / (1 - x/2 + x^2/10 - x^3/120)
-    f64 x2 = x * x
-    f64 x3 = x2 * x
-    f64 num = 1.0 + x * 0.5 + x2 / 10.0 + x3 / 120.0
-    f64 den = 1.0 - x * 0.5 + x2 / 10.0 - x3 / 120.0
-    f64 r = num / den
-    while n > 0 {
-        r = r * r
-        n = n - 1
-    }
-    return r
+    return std.math.math_exp(x)
 }
 
 export fn ops_sigmoid(f64* x, i32 n) {
@@ -45,8 +22,7 @@ export fn ops_sigmoid(f64* x, i32 n) {
 
 export fn ops_tanh(f64* x, i32 n) {
     for i in range(n) {
-        f64 ex = ops_exp(2.0 * x[i])
-        x[i] = (ex - 1.0) / (ex + 1.0)
+        x[i] = std.math.math_tanh(x[i])
     }
 }
 
