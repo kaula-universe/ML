@@ -134,3 +134,48 @@ export fn ops_cross_entropy_deriv(f64* y, f64* target, f64* out, i32 n) {
         out[i] = y[i] - target[i]
     }
 }
+
+// 交叉熵损失 -Σ t[i]·log(y[i])（y 为 softmax 概率，t 为 one-hot 目标）
+export fn ops_cross_entropy(f64* y, f64* target, i32 n) f64 {
+    f64 s = 0.0
+    for i in range(n) {
+        if target[i] > 0.0 {
+            s = s - target[i] * std.math.math_log(y[i])
+        }
+    }
+    return s
+}
+
+// argmax：返回最大元素下标
+export fn ops_argmax(f64* x, i32 n) i32 {
+    i32 best = 0
+    for i in range(n) {
+        if x[i] > x[best] {
+            best = i
+        }
+    }
+    return best
+}
+
+// argmin：返回最小元素下标
+export fn ops_argmin(f64* x, i32 n) i32 {
+    i32 best = 0
+    for i in range(n) {
+        if x[i] < x[best] {
+            best = i
+        }
+    }
+    return best
+}
+
+// clip：把 x[i] 限制到 [lo, hi]
+export fn ops_clip(f64* x, f64 lo, f64 hi, i32 n) {
+    for i in range(n) {
+        if x[i] < lo {
+            x[i] = lo
+        }
+        if x[i] > hi {
+            x[i] = hi
+        }
+    }
+}

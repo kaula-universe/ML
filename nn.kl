@@ -1,4 +1,4 @@
-import "ml/ops.kl"
+import "ops.kl"
 import std.math
 import std.memory
 
@@ -9,6 +9,7 @@ export class Linear {
     nout: i32
     act: i32
     lr: f64
+    mom: f64
     w: f64*
     b: f64*
     xin: f64*
@@ -18,12 +19,15 @@ export class Linear {
     gb: f64*
     gx: f64*
     d: f64*
+    vw: f64*
+    vb: f64*
 
     constructor(i32 nin, i32 nout, f64 lr, i32 act) {
         self.nin = nin
         self.nout = nout
         self.lr = lr
         self.act = act
+        self.mom = 0.0
         self.w = as<f64*>(std.memory.kmm_v4_calloc(nin * nout, 8))
         self.b = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
         self.xin = as<f64*>(std.memory.kmm_v4_calloc(nin, 8))
@@ -33,6 +37,8 @@ export class Linear {
         self.gb = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
         self.gx = as<f64*>(std.memory.kmm_v4_calloc(nin, 8))
         self.d = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
+        self.vw = as<f64*>(std.memory.kmm_v4_calloc(nin * nout, 8))
+        self.vb = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
         f64 scale = std.math.math_sqrt(2.0 / as<f64>(nin))
         i32 seed = 123456789
         for i in range(self.size_w()) {
@@ -44,6 +50,10 @@ export class Linear {
 
     fn size_w() i32 {
         return self.nin * self.nout
+    }
+
+    fn set_momentum(f64 m) {
+        self.mom = m
     }
 
     fn forward(f64* x) f64* {
@@ -103,31 +113,54 @@ export class Linear {
         return self.nin
     }
 
+    // 动量 SGD：v = mom·v + lr·g；w -= v（mom=0 时退化为普通 SGD）
     fn update() {
         for i in range(self.size_w()) {
-            self.w[i] = self.w[i] - self.lr * self.gw[i]
+            f64 g = self.gw[i]
             self.gw[i] = 0.0
+            if self.mom > 0.0 {
+                self.vw[i] = self.mom * self.vw[i] + self.lr * g
+                self.w[i] = self.w[i] - self.vw[i]
+            } else {
+                self.w[i] = self.w[i] - self.lr * g
+            }
         }
         for j in range(self.nout) {
-            self.b[j] = self.b[j] - self.lr * self.gb[j]
+            f64 g = self.gb[j]
             self.gb[j] = 0.0
+            if self.mom > 0.0 {
+                self.vb[j] = self.mom * self.vb[j] + self.lr * g
+                self.b[j] = self.b[j] - self.vb[j]
+            } else {
+                self.b[j] = self.b[j] - self.lr * g
+            }
         }
     }
 }
 
-// 多层感知机（全连接层堆叠 + 反向传播）
+// 多层感知机（任意层数堆叠 + 反向传播）
+// dims: 每层宽度，共 cnt+1 项（输入维度 + 各隐藏层/输出维度）
+// acts: 每层激活，共 cnt 项（0=linear, 1=relu, 2=sigmoid, 3=tanh）
+// 分类训练（train_step_ce / predict_softmax）时最后一层请用 act=0：
+// 输出层为 logits，predict_softmax 会施加 softmax，CE 反向也按 softmax+CE 处理。
 export class MLP {
     cnt: i32
     layers: Linear*
 
-    constructor(i32 s0, i32 s1, i32 s2, f64 lr) {
-        self.cnt = 2
-        self.layers = as<Linear*>(std.memory.kmm_v4_calloc(2, 8))
-        i32 act = 2
-        Linear l0 = Linear(s0, s1, lr, act)
-        self.layers[0] = l0
-        Linear l1 = Linear(s1, s2, lr, act)
-        self.layers[1] = l1
+    constructor(i32* dims, i32 cnt, i32* acts, f64 lr) {
+        self.cnt = cnt
+        self.layers = as<Linear*>(std.memory.kmm_v4_calloc(cnt, 8))
+        for l in range(cnt) {
+            Linear lin = Linear(dims[l], dims[l + 1], lr, acts[l])
+            self.layers[l] = lin
+        }
+    }
+
+    fn set_momentum(f64 m) {
+        for l in range(self.cnt) {
+            Linear lin = self.layers[l]
+            lin.set_momentum(m)
+        }
     }
 
     fn predict(f64* x) f64* {
@@ -139,10 +172,24 @@ export class MLP {
         return cur
     }
 
+    // 分类预测：输出层 logits 施加 softmax，返回概率分布
+    fn predict_softmax(f64* x) f64* {
+        f64* cur = self.predict(x)
+        Linear last = self.layers[self.cnt - 1]
+        ops_softmax(cur, last.nout)
+        return cur
+    }
+
     fn loss(f64* x, f64* y_true) f64 {
         f64* y = self.predict(x)
         Linear last = self.layers[self.cnt - 1]
         return ops_mse(y, y_true, last.nout)
+    }
+
+    fn loss_ce(f64* x, f64* y_true) f64 {
+        f64* y = self.predict_softmax(x)
+        Linear last = self.layers[self.cnt - 1]
+        return ops_cross_entropy(y, y_true, last.nout)
     }
 
     fn train_step(f64* x, f64* y_true) f64 {
@@ -151,6 +198,25 @@ export class MLP {
         f64 loss = ops_mse(y, y_true, last.nout)
         f64* dy = as<f64*>(std.memory.kmm_v4_alloc(last.nout * 8))
         ops_mse_deriv(y, y_true, dy, last.nout)
+        f64* g = dy
+        i32 idx = self.cnt - 1
+        while idx >= 0 {
+            Linear lin = self.layers[idx]
+            g = lin.backward(g)
+            lin.update()
+            idx = idx - 1
+        }
+        std.memory.kmm_v4_free(dy)
+        return loss
+    }
+
+    // 交叉熵 + softmax 训练（最后一层须为 act=0，输出为 logits）
+    fn train_step_ce(f64* x, f64* y_true) f64 {
+        f64* y = self.predict_softmax(x)
+        Linear last = self.layers[self.cnt - 1]
+        f64 loss = ops_cross_entropy(y, y_true, last.nout)
+        f64* dy = as<f64*>(std.memory.kmm_v4_alloc(last.nout * 8))
+        ops_cross_entropy_deriv(y, y_true, dy, last.nout)
         f64* g = dy
         i32 idx = self.cnt - 1
         while idx >= 0 {

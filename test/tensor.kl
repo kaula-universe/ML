@@ -1,0 +1,17 @@
+import "../tensor.kl"
+import std.io
+
+fn main() {
+    Tensor a = Tensor(2, 3)
+    a.fill(2.0)
+    Tensor t = a.transpose()
+    std.io.println("t.rows = ", t.rows, " t.cols = ", t.cols, " t.sum = ", t.sum())
+
+    Tensor b = Tensor(2, 2)
+    b.set(0, 0, 3.0); b.set(0, 1, 1.0); b.set(1, 0, 2.0); b.set(1, 1, 5.0)
+    std.io.println("argmax = ", b.argmax())
+    b.scale(10.0)
+    std.io.println("after scale max = ", b.argmax(), " sum = ", b.sum())
+    b.add_scalar(1.0)
+    std.io.println("after add sum = ", b.sum())
+}

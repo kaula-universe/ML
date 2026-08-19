@@ -34,6 +34,38 @@ export class Tensor {
         }
         return s
     }
+
+    fn scale(f64 s) {
+        for i in range(self.size) {
+            self.data[i] = self.data[i] * s
+        }
+    }
+
+    fn add_scalar(f64 v) {
+        for i in range(self.size) {
+            self.data[i] = self.data[i] + v
+        }
+    }
+
+    fn transpose() Tensor {
+        Tensor t = Tensor(self.cols, self.rows)
+        for i in range(self.rows) {
+            for j in range(self.cols) {
+                t.data[j * self.rows + i] = self.data[i * self.cols + j]
+            }
+        }
+        return t
+    }
+
+    fn argmax() i32 {
+        i32 best = 0
+        for i in range(self.size) {
+            if self.data[i] > self.data[best] {
+                best = i
+            }
+        }
+        return best
+    }
 }
 
 export fn ml_matmul(a: Tensor, b: Tensor, out: Tensor) {
