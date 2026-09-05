@@ -1,0 +1,122 @@
+import "ops.kl"
+import std.memory
+import std.random
+
+// Dropout 层
+// 训练时: 以概率 p 将元素置零，剩余元素缩放 1/(1-p)
+// 推理时: 不做任何操作（直接通过）
+export class Dropout {
+    f64 p             // 丢弃概率
+    f64* mask         // 二值掩码（训练时生成）
+    i32 training      // 1=训练模式, 0=推理模式
+
+    constructor(f64 p) {
+        self.p = p
+        self.training = 1
+        self.mask = null
+    }
+
+    // 前向传播: x 和 out 可以相同（in-place）
+    fn forward(f64* x, f64* out, i32 n) {
+        if self.training == 0 || self.p == 0.0 {
+            // 推理模式：直接复制
+            if out != x {
+                ops_copy(x, out, n)
+            }
+            return
+        }
+        // 训练模式：生成掩码并应用
+        if self.mask != null {
+            std.memory.kmm_v4_free(self.mask)
+        }
+        self.mask = as<f64*>(std.memory.kmm_v4_alloc(n * 8))
+        f64 scale = 1.0 / (1.0 - self.p)
+        for i in range(n) {
+            f64 r = std.random.random_f64()
+            if r < self.p {
+                self.mask[i] = 0.0
+                out[i] = 0.0
+            } else {
+                self.mask[i] = scale
+                out[i] = x[i] * scale
+            }
+        }
+    }
+
+    // 反向传播: dy 和 dx 可以相同（in-place）
+    fn backward(f64* dy, f64* dx, i32 n) {
+        if self.training == 0 || self.p == 0.0 {
+            if dx != dy {
+                ops_copy(dy, dx, n)
+            }
+            return
+        }
+        // 应用掩码
+        for i in range(n) {
+            dx[i] = dy[i] * self.mask[i]
+        }
+    }
+
+    fn train_mode() {
+        self.training = 1
+    }
+
+    fn eval_mode() {
+        self.training = 0
+    }
+}
+
+// Alpha Dropout（用于 SELU 激活的自归一化网络）
+// 保持均值和方差不变
+export class AlphaDropout {
+    f64 p
+    f64 alpha         // SELU 的 alpha
+    f64 scale         // 保持方差的缩放因子
+    f64* mask
+    i32 training
+
+    constructor(f64 p) {
+        self.p = p
+        self.alpha = 1.6732632423543772
+        self.scale = 1.0507009873554805
+        self.training = 1
+        self.mask = null
+    }
+
+    fn forward(f64* x, f64* out, i32 n) {
+        if self.training == 0 || self.p == 0.0 {
+            if out != x {
+                ops_copy(x, out, n)
+            }
+            return
+        }
+        if self.mask != null {
+            std.memory.kmm_v4_free(self.mask)
+        }
+        self.mask = as<f64*>(std.memory.kmm_v4_alloc(n * 8))
+        f64 a = -self.scale * self.alpha * self.p / (1.0 - self.p)
+        f64 b = self.scale / (1.0 - self.p)
+        for i in range(n) {
+            f64 r = std.random.random_f64()
+            if r < self.p {
+                self.mask[i] = a
+                out[i] = a
+            } else {
+                self.mask[i] = b
+                out[i] = x[i] * b
+            }
+        }
+    }
+
+    fn backward(f64* dy, f64* dx, i32 n) {
+        if self.training == 0 || self.p == 0.0 {
+            if dx != dy {
+                ops_copy(dy, dx, n)
+            }
+            return
+        }
+        for i in range(n) {
+            dx[i] = dy[i] * self.mask[i]
+        }
+    }
+}

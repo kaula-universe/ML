@@ -1,0 +1,163 @@
+import "ops.kl"
+import std.memory
+
+// Adam 优化器
+// 每个参数维护一阶矩(m)和二阶矩(v)，自适应学习率
+export class Adam {
+    f64 lr
+    f64 beta1
+    f64 beta2
+    f64 eps
+    f64 wd          // weight decay (L2 正则化系数)
+    i32 t           // 时间步
+    i32 n           // 参数总数
+    f64* m          // 一阶矩估计
+    f64* v          // 二阶矩估计
+
+    constructor(f64 lr, i32 n) {
+        self.lr = lr
+        self.beta1 = 0.9
+        self.beta2 = 0.999
+        self.eps = 1e-8
+        self.wd = 0.0
+        self.t = 0
+        self.n = n
+        self.m = as<f64*>(std.memory.kmm_v4_calloc(n, 8))
+        self.v = as<f64*>(std.memory.kmm_v4_calloc(n, 8))
+    }
+
+    fn set_weight_decay(f64 wd) {
+        self.wd = wd
+    }
+
+    fn step(f64* params, f64* grads) {
+        self.t = self.t + 1
+        f64 bc1 = 1.0 - std.math.math_pow(self.beta1, as<f64>(self.t))
+        f64 bc2 = 1.0 - std.math.math_pow(self.beta2, as<f64>(self.t))
+        for i in range(self.n) {
+            f64 g = grads[i]
+            // weight decay
+            if self.wd > 0.0 {
+                g = g + self.wd * params[i]
+            }
+            // 更新一阶矩和二阶矩
+            self.m[i] = self.beta1 * self.m[i] + (1.0 - self.beta1) * g
+            self.v[i] = self.beta2 * self.v[i] + (1.0 - self.beta2) * g * g
+            // 偏差修正
+            f64 m_hat = self.m[i] / bc1
+            f64 v_hat = self.v[i] / bc2
+            // 更新参数
+            params[i] = params[i] - self.lr * m_hat / (std.math.math_sqrt(v_hat) + self.eps)
+        }
+    }
+
+    fn zero_grad(f64* grads) {
+        for i in range(self.n) {
+            grads[i] = 0.0
+        }
+    }
+}
+
+// RMSprop 优化器
+export class RMSprop {
+    f64 lr
+    f64 alpha       // 衰减率
+    f64 eps
+    f64 wd
+    f64* cache      // 梯度平方的移动平均
+
+    constructor(f64 lr, i32 n) {
+        self.lr = lr
+        self.alpha = 0.99
+        self.eps = 1e-8
+        self.wd = 0.0
+        self.cache = as<f64*>(std.memory.kmm_v4_calloc(n, 8))
+    }
+
+    fn set_weight_decay(f64 wd) {
+        self.wd = wd
+    }
+
+    fn step(f64* params, f64* grads, i32 n) {
+        for i in range(n) {
+            f64 g = grads[i]
+            if self.wd > 0.0 {
+                g = g + self.wd * params[i]
+            }
+            self.cache[i] = self.alpha * self.cache[i] + (1.0 - self.alpha) * g * g
+            params[i] = params[i] - self.lr * g / (std.math.math_sqrt(self.cache[i]) + self.eps)
+        }
+    }
+}
+
+// SGD with momentum（兼容 nn.kl 中的实现，提供独立接口）
+export class SGD {
+    f64 lr
+    f64 momentum
+    f64* velocity
+
+    constructor(f64 lr, i32 n) {
+        self.lr = lr
+        self.momentum = 0.0
+        self.velocity = as<f64*>(std.memory.kmm_v4_calloc(n, 8))
+    }
+
+    fn set_momentum(f64 m) {
+        self.momentum = m
+    }
+
+    fn step(f64* params, f64* grads, i32 n) {
+        for i in range(n) {
+            self.velocity[i] = self.momentum * self.velocity[i] + self.lr * grads[i]
+            params[i] = params[i] - self.velocity[i]
+        }
+    }
+}
+
+// 学习率调度器：StepLR（每 step_size 个 epoch 乘以 gamma）
+export class StepLR {
+    f64 lr
+    i32 step_size
+    f64 gamma
+    i32 last_epoch
+
+    constructor(f64 lr, i32 step_size, f64 gamma) {
+        self.lr = lr
+        self.step_size = step_size
+        self.gamma = gamma
+        self.last_epoch = 0
+    }
+
+    fn get_lr() f64 {
+        return self.lr * std.math.math_pow(self.gamma, as<f64>(self.last_epoch / self.step_size))
+    }
+
+    fn step() {
+        self.last_epoch = self.last_epoch + 1
+    }
+}
+
+// 学习率调度器：CosineAnnealingLR
+export class CosineAnnealingLR {
+    f64 lr
+    f64 lr_min
+    i32 T_max
+    i32 last_epoch
+
+    constructor(f64 lr, f64 lr_min, i32 T_max) {
+        self.lr = lr
+        self.lr_min = lr_min
+        self.T_max = T_max
+        self.last_epoch = 0
+    }
+
+    fn get_lr() f64 {
+        f64 t = as<f64>(self.last_epoch)
+        f64 T = as<f64>(self.T_max)
+        return self.lr_min + 0.5 * (self.lr - self.lr_min) * (1.0 + std.math.math_cos(3.14159265358979 * t / T))
+    }
+
+    fn step() {
+        self.last_epoch = self.last_epoch + 1
+    }
+}

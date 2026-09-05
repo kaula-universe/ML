@@ -155,3 +155,154 @@ export fn ops_clip(f64* x, f64 lo, f64 hi, i32 n) {
         }
     }
 }
+
+// ---- 新增激活函数 ----
+
+// LeakyReLU: x > 0 ? x : alpha * x
+export fn ops_leaky_relu(f64* x, f64 alpha, i32 n) {
+    for i in range(n) {
+        if x[i] < 0.0 {
+            x[i] = alpha * x[i]
+        }
+    }
+}
+
+// LeakyReLU 导数: x > 0 ? 1 : alpha
+export fn ops_leaky_relu_deriv(f64* x, f64 alpha, f64* out, i32 n) {
+    for i in range(n) {
+        if x[i] > 0.0 {
+            out[i] = 1.0
+        } else {
+            out[i] = alpha
+        }
+    }
+}
+
+// ELU: x > 0 ? x : alpha * (exp(x) - 1)
+export fn ops_elu(f64* x, f64 alpha, i32 n) {
+    for i in range(n) {
+        if x[i] <= 0.0 {
+            x[i] = alpha * (ops_exp(x[i]) - 1.0)
+        }
+    }
+}
+
+// ELU 导数: x > 0 ? 1 : alpha * exp(x)
+export fn ops_elu_deriv(f64* x, f64 alpha, f64* out, i32 n) {
+    for i in range(n) {
+        if x[i] > 0.0 {
+            out[i] = 1.0
+        } else {
+            out[i] = alpha * ops_exp(x[i])
+        }
+    }
+}
+
+// Swish / SiLU: x * sigmoid(x)
+export fn ops_swish(f64* x, i32 n) {
+    for i in range(n) {
+        f64 s = 1.0 / (1.0 + ops_exp(-x[i]))
+        x[i] = x[i] * s
+    }
+}
+
+// Swish 导数: sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
+export fn ops_swish_deriv(f64* x, f64* out, i32 n) {
+    for i in range(n) {
+        f64 s = 1.0 / (1.0 + ops_exp(-x[i]))
+        out[i] = s + x[i] * s * (1.0 - s)
+    }
+}
+
+// Softplus: log(1 + exp(x))
+export fn ops_softplus(f64 x) f64 {
+    if x > 20.0 {
+        return x
+    }
+    if x < -20.0 {
+        return 0.0
+    }
+    return std.math.math_log(1.0 + ops_exp(x))
+}
+
+// ---- 正则化 ----
+
+// L1 正则化损失: Σ|x[i]|
+export fn ops_l1_reg(f64* x, i32 n) f64 {
+    f64 s = 0.0
+    for i in range(n) {
+        if x[i] < 0.0 {
+            s = s - x[i]
+        } else {
+            s = s + x[i]
+        }
+    }
+    return s
+}
+
+// L2 正则化损失: Σx[i]²
+export fn ops_l2_reg(f64* x, i32 n) f64 {
+    f64 s = 0.0
+    for i in range(n) {
+        s = s + x[i] * x[i]
+    }
+    return s
+}
+
+// L1 梯度: sign(x[i])
+export fn ops_l1_grad(f64* x, f64* out, i32 n) {
+    for i in range(n) {
+        if x[i] > 0.0 {
+            out[i] = 1.0
+        } else if x[i] < 0.0 {
+            out[i] = -1.0
+        } else {
+            out[i] = 0.0
+        }
+    }
+}
+
+// L2 梯度: 2 * x[i]
+export fn ops_l2_grad(f64* x, f64* out, i32 n) {
+    for i in range(n) {
+        out[i] = 2.0 * x[i]
+    }
+}
+
+// ---- 数值工具 ----
+
+// clip 梯度（范数裁剪）: 如果 ||x|| > max_norm, 则 x *= max_norm / ||x||
+export fn ops_clip_grad_norm(f64* x, f64 max_norm, i32 n) {
+    f64 norm = 0.0
+    for i in range(n) {
+        norm = norm + x[i] * x[i]
+    }
+    norm = std.math.math_sqrt(norm)
+    if norm > max_norm {
+        f64 scale = max_norm / norm
+        for i in range(n) {
+            x[i] = x[i] * scale
+        }
+    }
+}
+
+// fill: 用常数 v 填充 x[0..n)
+export fn ops_fill(f64* x, f64 v, i32 n) {
+    for i in range(n) {
+        x[i] = v
+    }
+}
+
+// copy: src -> dst
+export fn ops_copy(f64* src, f64* dst, i32 n) {
+    for i in range(n) {
+        dst[i] = src[i]
+    }
+}
+
+// axpy: y = a*x + y
+export fn ops_axpy(f64 a, f64* x, f64* y, i32 n) {
+    for i in range(n) {
+        y[i] = a * x[i] + y[i]
+    }
+}

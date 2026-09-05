@@ -1,0 +1,24 @@
+{
+  "packages": {
+    "algebra": "0.0.0+4e2a117",
+    "eigen": "0.0.0+f8180ee",
+    "tensor": "0.0.0+7a92ff8"
+  },
+  "entries": {
+    "algebra": {
+      "version": "0.0.0+4e2a117",
+      "resolved_from": "fetch",
+      "registry": "https://gitee.com/kaula-universe"
+    },
+    "eigen": {
+      "version": "0.0.0+f8180ee",
+      "resolved_from": "fetch",
+      "registry": "https://gitee.com/kaula-universe"
+    },
+    "tensor": {
+      "version": "0.0.0+7a92ff8",
+      "resolved_from": "fetch",
+      "registry": "https://gitee.com/kaula-universe"
+    }
+  }
+}

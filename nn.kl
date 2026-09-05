@@ -8,6 +8,15 @@ export fn ml_seed(u64 s) {
     std.random.random_seed(s)
 }
 
+// 激活函数 ID 常量
+i32 ACT_LINEAR = 0
+i32 ACT_RELU = 1
+i32 ACT_SIGMOID = 2
+i32 ACT_TANH = 3
+i32 ACT_LEAKY_RELU = 4
+i32 ACT_ELU = 5
+i32 ACT_SWISH = 6
+
 // 全连接层：y = act(W·x + b)
 // 前向缓存 x 供反向使用；反向同时累积 gw/gb，update() 时应用
 export class Linear {
@@ -72,14 +81,23 @@ export class Linear {
             self.z[j] = acc
             self.y[j] = acc
         }
-        if self.act == 1 {
+        if self.act == ACT_RELU {
             ops_relu(self.y, self.nout)
         }
-        if self.act == 2 {
+        if self.act == ACT_SIGMOID {
             ops_sigmoid(self.y, self.nout)
         }
-        if self.act == 3 {
+        if self.act == ACT_TANH {
             ops_tanh(self.y, self.nout)
+        }
+        if self.act == ACT_LEAKY_RELU {
+            ops_leaky_relu(self.y, 0.01, self.nout)
+        }
+        if self.act == ACT_ELU {
+            ops_elu(self.y, 1.0, self.nout)
+        }
+        if self.act == ACT_SWISH {
+            ops_swish(self.y, self.nout)
         }
         return self.y
     }
@@ -87,16 +105,34 @@ export class Linear {
     fn backward(f64* dy) f64* {
         for j in range(self.nout) {
             f64 dz = 1.0
-            if self.act == 1 {
+            if self.act == ACT_RELU {
                 if self.z[j] <= 0.0 {
                     dz = 0.0
                 }
             }
-            if self.act == 2 {
+            if self.act == ACT_SIGMOID {
                 dz = self.y[j] * (1.0 - self.y[j])
             }
-            if self.act == 3 {
+            if self.act == ACT_TANH {
                 dz = 1.0 - self.y[j] * self.y[j]
+            }
+            if self.act == ACT_LEAKY_RELU {
+                if self.z[j] > 0.0 {
+                    dz = 1.0
+                } else {
+                    dz = 0.01
+                }
+            }
+            if self.act == ACT_ELU {
+                if self.z[j] > 0.0 {
+                    dz = 1.0
+                } else {
+                    dz = self.y[j] + 1.0  // ELU(x) + 1 当 x <= 0
+                }
+            }
+            if self.act == ACT_SWISH {
+                f64 s = 1.0 / (1.0 + ops_exp(-self.z[j]))
+                dz = s + self.z[j] * s * (1.0 - s)
             }
             self.d[j] = dy[j] * dz
         }
@@ -233,4 +269,248 @@ export class MLP {
         std.memory.kmm_v4_free(dy)
         return loss
     }
+}
+
+// ============================================================
+// Conv2d: 2D 卷积层
+// 输入: [batch, ich, ih, iw]（行优先展平）
+// 输出: [batch, och, oh, ow]
+// oh = (ih + 2*pad - kernel) / stride + 1
+// ow = (iw + 2*pad - kernel) / stride + 1
+// ============================================================
+export class Conv2d {
+    ich: i32
+    och: i32
+    ksz: i32
+    str: i32
+    pad: i32
+    lr: f64
+    weight: f64*
+    bias: f64*
+    gw: f64*
+    gb: f64*
+    vx: f64*
+    ih: i32
+    iw: i32
+    oh: i32
+    ow: i32
+
+    constructor(i32 a_ich, i32 a_och, i32 a_ksz, i32 a_str, i32 a_pad, f64 a_lr) {
+        self.ich = a_ich
+        self.och = a_och
+        self.ksz = a_ksz
+        self.str = a_str
+        self.pad = a_pad
+        self.lr = a_lr
+        i32 fan_in = a_ich * a_ksz * a_ksz
+        f64 scale = std.math.math_sqrt(2.0 / as<f64>(fan_in))
+        i32 wsize = a_och * a_ich * a_ksz * a_ksz
+        self.weight = as<f64*>(std.memory.kmm_v4_alloc(wsize * 8))
+        self.bias = as<f64*>(std.memory.kmm_v4_alloc(a_och * 8))
+        self.gw = as<f64*>(std.memory.kmm_v4_alloc(wsize * 8))
+        self.gb = as<f64*>(std.memory.kmm_v4_alloc(a_och * 8))
+        i32 idx = 0
+        while idx < wsize {
+            f64 r = std.random.random_f64()
+            self.weight[idx] = (r * 2.0 - 1.0) * scale
+            idx = idx + 1
+        }
+        i32 bi = 0
+        while bi < a_och {
+            self.bias[bi] = 0.0
+            bi = bi + 1
+        }
+    }
+
+    // 前向: 输入 x 形状 [batch, ich, ih, iw]
+    fn forward(f64* x, i32 batch, i32 a_ih, i32 a_iw) f64* {
+        self.ih = a_ih
+        self.iw = a_iw
+        self.oh = (a_ih + 2 * self.pad - self.ksz) / self.str + 1
+        self.ow = (a_iw + 2 * self.pad - self.ksz) / self.str + 1
+        i32 out_size = batch * self.och * self.oh * self.ow
+        f64* out = as<f64*>(std.memory.kmm_v4_calloc(out_size, 8))
+
+        // 缓存输入
+        i32 in_size = batch * self.ich * a_ih * a_iw
+        if self.vx != null {
+            std.memory.kmm_v4_free(self.vx)
+        }
+        self.vx = as<f64*>(std.memory.kmm_v4_alloc(in_size * 8))
+        ops_copy(x, self.vx, in_size)
+
+        // 卷积
+        i32 b = 0
+        while b < batch {
+            i32 oc = 0
+            while oc < self.och {
+                i32 oh = 0
+                while oh < self.oh {
+                    i32 ow = 0
+                    while ow < self.ow {
+                        f64 acc = self.bias[oc]
+                        i32 ic = 0
+                        while ic < self.ich {
+                            i32 kh = 0
+                            while kh < self.ksz {
+                                i32 kw = 0
+                                while kw < self.ksz {
+                                    i32 ih = oh * self.str + kh - self.pad
+                                    i32 iw2 = ow * self.str + kw - self.pad
+                                    if ih >= 0 && ih < a_ih && iw2 >= 0 && iw2 < a_iw {
+                                        i32 xi = ((b * self.ich + ic) * a_ih + ih) * a_iw + iw2
+                                        i32 wi = ((oc * self.ich + ic) * self.ksz + kh) * self.ksz + kw
+                                        acc = acc + x[xi] * self.weight[wi]
+                                    }
+                                    kw = kw + 1
+                                }
+                                kh = kh + 1
+                            }
+                            ic = ic + 1
+                        }
+                        i32 oi = ((b * self.och + oc) * self.oh + oh) * self.ow + ow
+                        out[oi] = acc
+                        ow = ow + 1
+                    }
+                    oh = oh + 1
+                }
+                oc = oc + 1
+            }
+            b = b + 1
+        }
+        return out
+    }
+
+    // 反向: dy 形状 [batch, och, oh, ow]
+    fn backward(f64* dy, i32 batch) {
+        i32 wsize = self.och * self.ich * self.ksz * self.ksz
+        i32 gi = 0
+        while gi < wsize {
+            self.gw[gi] = 0.0
+            gi = gi + 1
+        }
+        i32 bi = 0
+        while bi < self.och {
+            self.gb[bi] = 0.0
+            bi = bi + 1
+        }
+        // 计算权重梯度和偏置梯度
+        i32 b = 0
+        while b < batch {
+            i32 oc = 0
+            while oc < self.och {
+                i32 ohi = 0
+                while ohi < self.oh {
+                    i32 owi = 0
+                    while owi < self.ow {
+                        i32 oi = ((b * self.och + oc) * self.oh + ohi) * self.ow + owi
+                        f64 d = dy[oi]
+                        self.gb[oc] = self.gb[oc] + d
+                        i32 ic = 0
+                        while ic < self.ich {
+                            i32 kh = 0
+                            while kh < self.ksz {
+                                i32 kw = 0
+                                while kw < self.ksz {
+                                    i32 ih = ohi * self.str + kh - self.pad
+                                    i32 iw2 = owi * self.str + kw - self.pad
+                                    if ih >= 0 && ih < self.ih && iw2 >= 0 && iw2 < self.iw {
+                                        i32 xi = ((b * self.ich + ic) * self.ih + ih) * self.iw + iw2
+                                        i32 wi = ((oc * self.ich + ic) * self.ksz + kh) * self.ksz + kw
+                                        self.gw[wi] = self.gw[wi] + self.vx[xi] * d
+                                    }
+                                    kw = kw + 1
+                                }
+                                kh = kh + 1
+                            }
+                            ic = ic + 1
+                        }
+                        owi = owi + 1
+                    }
+                    ohi = ohi + 1
+                }
+                oc = oc + 1
+            }
+            b = b + 1
+        }
+        // 更新参数
+        gi = 0
+        while gi < wsize {
+            self.weight[gi] = self.weight[gi] - self.lr * self.gw[gi]
+            gi = gi + 1
+        }
+        bi = 0
+        while bi < self.och {
+            self.bias[bi] = self.bias[bi] - self.lr * self.gb[bi]
+            bi = bi + 1
+        }
+    }
+
+    fn output_size() i32 {
+        return self.och * self.oh * self.ow
+    }
+}
+
+// MaxPool2d: 最大池化层
+export class MaxPool2d {
+    ksz: i32
+    spt: i32
+
+    constructor(i32 a_ksz, i32 a_spt) {
+        self.ksz = a_ksz
+        self.spt = a_spt
+    }
+
+    // 前向: [batch, ch, ih, iw] -> [batch, ch, oh, ow]
+    fn forward(f64* x, i32 batch, i32 ch, i32 ih, i32 iw) f64* {
+        i32 oh = (ih - self.ksz) / self.spt + 1
+        i32 ow = (iw - self.ksz) / self.spt + 1
+        i32 out_size = batch * ch * oh * ow
+        f64* out = as<f64*>(std.memory.kmm_v4_calloc(out_size, 8))
+        i32 b = 0
+        while b < batch {
+            i32 c = 0
+            while c < ch {
+                i32 ohi = 0
+                while ohi < oh {
+                    i32 owi = 0
+                    while owi < ow {
+                        f64 mx = -1e30
+                        i32 kh = 0
+                        while kh < self.ksz {
+                            i32 kw = 0
+                            while kw < self.ksz {
+                                i32 ih2 = ohi * self.spt + kh
+                                i32 iw2 = owi * self.spt + kw
+                                if ih2 < ih && iw2 < iw {
+                                    i32 xi = ((b * ch + c) * ih + ih2) * iw + iw2
+                                    if x[xi] > mx {
+                                        mx = x[xi]
+                                    }
+                                }
+                                kw = kw + 1
+                            }
+                            kh = kh + 1
+                        }
+                        i32 oi = ((b * ch + c) * oh + ohi) * ow + owi
+                        out[oi] = mx
+                        owi = owi + 1
+                    }
+                    ohi = ohi + 1
+                }
+                c = c + 1
+            }
+            b = b + 1
+        }
+        return out
+    }
+}
+
+// Flatten: 将 [batch, ch, h, w] 展平为 [batch, ch*h*w]
+export fn flatten_forward(f64* x, i32 batch, i32 ch, i32 h, i32 w) f64* {
+    i32 dim = ch * h * w
+    i32 total = batch * dim
+    f64* out = as<f64*>(std.memory.kmm_v4_alloc(total * 8))
+    ops_copy(x, out, total)
+    return out
 }

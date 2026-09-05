@@ -1,3 +1,14 @@
 {
-  "name": "ml"
+  "name": "ml",
+  "dependencies": {
+    "tensor": {
+      "git": "https://gitee.com/kaula-universe/tensor"
+    },
+    "eigen": {
+      "git": "https://gitee.com/kaula-universe/eigen"
+    },
+    "algebra": {
+      "git": "https://gitee.com/kaula-universe/algebra"
+    }
+  }
 }
