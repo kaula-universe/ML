@@ -22,8 +22,8 @@ export class Adam {
         self.wd = 0.0
         self.t = 0
         self.n = n
-        self.m = as<f64*>(std.memory.kmm_v4_calloc(n, 8))
-        self.v = as<f64*>(std.memory.kmm_v4_calloc(n, 8))
+        self.m = as<f64*>(std.memory.kmm_v4_global_alloc(n * 8))
+        self.v = as<f64*>(std.memory.kmm_v4_global_alloc(n * 8))
     }
 
     fn set_weight_decay(f64 wd) {
@@ -71,7 +71,7 @@ export class RMSprop {
         self.alpha = 0.99
         self.eps = 1e-8
         self.wd = 0.0
-        self.cache = as<f64*>(std.memory.kmm_v4_calloc(n, 8))
+        self.cache = as<f64*>(std.memory.kmm_v4_global_alloc(n * 8))
     }
 
     fn set_weight_decay(f64 wd) {
@@ -99,7 +99,7 @@ export class SGD {
     constructor(f64 lr, i32 n) {
         self.lr = lr
         self.momentum = 0.0
-        self.velocity = as<f64*>(std.memory.kmm_v4_calloc(n, 8))
+        self.velocity = as<f64*>(std.memory.kmm_v4_global_alloc(n * 8))
     }
 
     fn set_momentum(f64 m) {

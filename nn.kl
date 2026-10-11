@@ -9,13 +9,15 @@ export fn ml_seed(u64 s) {
 }
 
 // 激活函数 ID 常量
-i32 ACT_LINEAR = 0
-i32 ACT_RELU = 1
-i32 ACT_SIGMOID = 2
-i32 ACT_TANH = 3
-i32 ACT_LEAKY_RELU = 4
-i32 ACT_ELU = 5
-i32 ACT_SWISH = 6
+// 注意：新编译器将大写开头的标识符视为类型（class/struct）名，
+// 全大写的全局常量会被误判为类型，故统一改用小写命名。
+i32 act_linear = 0
+i32 act_relu = 1
+i32 act_sigmoid = 2
+i32 act_tanh = 3
+i32 act_leaky_relu = 4
+i32 act_elu = 5
+i32 act_swish = 6
 
 // 全连接层：y = act(W·x + b)
 // 前向缓存 x 供反向使用；反向同时累积 gw/gb，update() 时应用
@@ -43,17 +45,17 @@ export class Linear {
         self.lr = lr
         self.act = act
         self.mom = 0.0
-        self.w = as<f64*>(std.memory.kmm_v4_calloc(nin * nout, 8))
-        self.b = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
-        self.xin = as<f64*>(std.memory.kmm_v4_calloc(nin, 8))
-        self.z = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
-        self.y = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
-        self.gw = as<f64*>(std.memory.kmm_v4_calloc(nin * nout, 8))
-        self.gb = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
-        self.gx = as<f64*>(std.memory.kmm_v4_calloc(nin, 8))
-        self.d = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
-        self.vw = as<f64*>(std.memory.kmm_v4_calloc(nin * nout, 8))
-        self.vb = as<f64*>(std.memory.kmm_v4_calloc(nout, 8))
+        self.w = as<f64*>(std.memory.kmm_v4_global_alloc(nin * nout * 8))
+        self.b = as<f64*>(std.memory.kmm_v4_global_alloc(nout * 8))
+        self.xin = as<f64*>(std.memory.kmm_v4_global_alloc(nin * 8))
+        self.z = as<f64*>(std.memory.kmm_v4_global_alloc(nout * 8))
+        self.y = as<f64*>(std.memory.kmm_v4_global_alloc(nout * 8))
+        self.gw = as<f64*>(std.memory.kmm_v4_global_alloc(nin * nout * 8))
+        self.gb = as<f64*>(std.memory.kmm_v4_global_alloc(nout * 8))
+        self.gx = as<f64*>(std.memory.kmm_v4_global_alloc(nin * 8))
+        self.d = as<f64*>(std.memory.kmm_v4_global_alloc(nout * 8))
+        self.vw = as<f64*>(std.memory.kmm_v4_global_alloc(nin * nout * 8))
+        self.vb = as<f64*>(std.memory.kmm_v4_global_alloc(nout * 8))
         f64 scale = std.math.math_sqrt(2.0 / as<f64>(nin))
         for i in range(self.size_w()) {
             f64 r = std.random.random_f64()
@@ -81,22 +83,22 @@ export class Linear {
             self.z[j] = acc
             self.y[j] = acc
         }
-        if self.act == ACT_RELU {
+        if self.act == act_relu {
             ops_relu(self.y, self.nout)
         }
-        if self.act == ACT_SIGMOID {
+        if self.act == act_sigmoid {
             ops_sigmoid(self.y, self.nout)
         }
-        if self.act == ACT_TANH {
+        if self.act == act_tanh {
             ops_tanh(self.y, self.nout)
         }
-        if self.act == ACT_LEAKY_RELU {
+        if self.act == act_leaky_relu {
             ops_leaky_relu(self.y, 0.01, self.nout)
         }
-        if self.act == ACT_ELU {
+        if self.act == act_elu {
             ops_elu(self.y, 1.0, self.nout)
         }
-        if self.act == ACT_SWISH {
+        if self.act == act_swish {
             ops_swish(self.y, self.nout)
         }
         return self.y
@@ -105,32 +107,32 @@ export class Linear {
     fn backward(f64* dy) f64* {
         for j in range(self.nout) {
             f64 dz = 1.0
-            if self.act == ACT_RELU {
+            if self.act == act_relu {
                 if self.z[j] <= 0.0 {
                     dz = 0.0
                 }
             }
-            if self.act == ACT_SIGMOID {
+            if self.act == act_sigmoid {
                 dz = self.y[j] * (1.0 - self.y[j])
             }
-            if self.act == ACT_TANH {
+            if self.act == act_tanh {
                 dz = 1.0 - self.y[j] * self.y[j]
             }
-            if self.act == ACT_LEAKY_RELU {
+            if self.act == act_leaky_relu {
                 if self.z[j] > 0.0 {
                     dz = 1.0
                 } else {
                     dz = 0.01
                 }
             }
-            if self.act == ACT_ELU {
+            if self.act == act_elu {
                 if self.z[j] > 0.0 {
                     dz = 1.0
                 } else {
                     dz = self.y[j] + 1.0  // ELU(x) + 1 当 x <= 0
                 }
             }
-            if self.act == ACT_SWISH {
+            if self.act == act_swish {
                 f64 s = 1.0 / (1.0 + ops_exp(-self.z[j]))
                 dz = s + self.z[j] * s * (1.0 - s)
             }
@@ -190,7 +192,7 @@ export class MLP {
     constructor(i32* dims, i32 cnt, i32* acts, f64 lr) {
         ml_seed(123456789)
         self.cnt = cnt
-        self.layers = as<Linear*>(std.memory.kmm_v4_calloc(cnt, 8))
+        self.layers = as<Linear*>(std.memory.kmm_v4_global_alloc(cnt * 8))
         for l in range(cnt) {
             Linear lin = Linear(dims[l], dims[l + 1], lr, acts[l])
             self.layers[l] = lin
@@ -305,10 +307,10 @@ export class Conv2d {
         i32 fan_in = a_ich * a_ksz * a_ksz
         f64 scale = std.math.math_sqrt(2.0 / as<f64>(fan_in))
         i32 wsize = a_och * a_ich * a_ksz * a_ksz
-        self.weight = as<f64*>(std.memory.kmm_v4_alloc(wsize * 8))
-        self.bias = as<f64*>(std.memory.kmm_v4_alloc(a_och * 8))
-        self.gw = as<f64*>(std.memory.kmm_v4_alloc(wsize * 8))
-        self.gb = as<f64*>(std.memory.kmm_v4_alloc(a_och * 8))
+        self.weight = as<f64*>(std.memory.kmm_v4_global_alloc(wsize * 8))
+        self.bias = as<f64*>(std.memory.kmm_v4_global_alloc(a_och * 8))
+        self.gw = as<f64*>(std.memory.kmm_v4_global_alloc(wsize * 8))
+        self.gb = as<f64*>(std.memory.kmm_v4_global_alloc(a_och * 8))
         i32 idx = 0
         while idx < wsize {
             f64 r = std.random.random_f64()
@@ -329,14 +331,14 @@ export class Conv2d {
         self.oh = (a_ih + 2 * self.pad - self.ksz) / self.str + 1
         self.ow = (a_iw + 2 * self.pad - self.ksz) / self.str + 1
         i32 out_size = batch * self.och * self.oh * self.ow
-        f64* out = as<f64*>(std.memory.kmm_v4_calloc(out_size, 8))
+        f64* out = as<f64*>(std.memory.kmm_v4_global_alloc(out_size * 8))
 
         // 缓存输入
         i32 in_size = batch * self.ich * a_ih * a_iw
         if self.vx != null {
             std.memory.kmm_v4_free(self.vx)
         }
-        self.vx = as<f64*>(std.memory.kmm_v4_alloc(in_size * 8))
+        self.vx = as<f64*>(std.memory.kmm_v4_global_alloc(in_size * 8))
         ops_copy(x, self.vx, in_size)
 
         // 卷积
@@ -466,7 +468,7 @@ export class MaxPool2d {
         i32 oh = (ih - self.ksz) / self.spt + 1
         i32 ow = (iw - self.ksz) / self.spt + 1
         i32 out_size = batch * ch * oh * ow
-        f64* out = as<f64*>(std.memory.kmm_v4_calloc(out_size, 8))
+        f64* out = as<f64*>(std.memory.kmm_v4_global_alloc(out_size * 8))
         i32 b = 0
         while b < batch {
             i32 c = 0
@@ -510,7 +512,7 @@ export class MaxPool2d {
 export fn flatten_forward(f64* x, i32 batch, i32 ch, i32 h, i32 w) f64* {
     i32 dim = ch * h * w
     i32 total = batch * dim
-    f64* out = as<f64*>(std.memory.kmm_v4_alloc(total * 8))
+    f64* out = as<f64*>(std.memory.kmm_v4_global_alloc(total * 8))
     ops_copy(x, out, total)
     return out
 }

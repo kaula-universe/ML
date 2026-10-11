@@ -10,7 +10,7 @@ export class Tensor {
         self.rows = rows
         self.cols = cols
         self.size = rows * cols
-        self.data = as<f64*>(std.memory.kmm_v4_calloc(self.size, 8))
+        self.data = as<f64*>(std.memory.kmm_v4_global_alloc(self.size * 8))
     }
 
     fn at(i32 r, i32 c) f64 {

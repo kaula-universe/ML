@@ -29,7 +29,7 @@ export class Dropout {
         if self.mask != null {
             std.memory.kmm_v4_free(self.mask)
         }
-        self.mask = as<f64*>(std.memory.kmm_v4_alloc(n * 8))
+        self.mask = as<f64*>(std.memory.kmm_v4_global_alloc(n * 8))
         f64 scale = 1.0 / (1.0 - self.p)
         for i in range(n) {
             f64 r = std.random.random_f64()
@@ -93,7 +93,7 @@ export class AlphaDropout {
         if self.mask != null {
             std.memory.kmm_v4_free(self.mask)
         }
-        self.mask = as<f64*>(std.memory.kmm_v4_alloc(n * 8))
+        self.mask = as<f64*>(std.memory.kmm_v4_global_alloc(n * 8))
         f64 a = -self.scale * self.alpha * self.p / (1.0 - self.p)
         f64 b = self.scale / (1.0 - self.p)
         for i in range(n) {
